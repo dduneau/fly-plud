@@ -15,7 +15,7 @@ has_svglite <- requireNamespace("svglite", quietly = TRUE)
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
 APP_VERSION <- "1.0"
-EXAMPLE_FILE <- "example_PLUD_4lines_per_fly.csv"
+EXAMPLE_FILE <- "example_PLUD_RAL821.csv"
 PALETTE <- c("#1f5fbf", "#e8850c", "#2a9d6f", "#c0398a", "#7a5cc4", "#8c6d1f", "#3a3a3a", "#d1453b")
 GREY_FILL <- "#9fb8dc"
 
@@ -29,7 +29,7 @@ read_any <- function(path) {
              check.names = FALSE, comment.char = "", strip.white = TRUE, na.strings = c("NA", ""))
 }
 guess <- function(cols, candidates) { hit <- candidates[candidates %in% cols]; if (length(hit)) hit[1] else "" }
-num <- function(x) suppressWarnings(as.numeric(as.character(x)))
+num <- function(x) if (is.numeric(x)) x else suppressWarnings(as.numeric(sub(",", ".", trimws(as.character(x)), fixed = TRUE)))   # accepts decimal commas
 chr <- function(x) { x <- trimws(as.character(x)); x[is.na(x) | x == ""] <- "NA"; x }    # missing values become a group "NA"
 # default order: alphabetical, with a wild-type or control group first (it then becomes the reference)
 default_order <- function(values) {
@@ -331,9 +331,9 @@ ui <- page_sidebar(
   sidebar = sidebar(width = 340,
     h6("1. Data"),
     fileInput("file", NULL, accept = c(".csv", ".txt", ".tsv"), placeholder = "Per-fly table from CFU Drop Counter"),
-    actionLink("use_example", "Try the example (wild type and 3 mutants, males)"),
+    actionLink("use_example", "Try the example (RAL821, 36 females and 36 males)"),
     div(class = "small text-muted mt-1", textOutput("data_info")),
-    selectInput("id", "Fly identifier", NULL),
+    selectInput("id", "Fly identifier (optional)", NULL),
     selectInput("load_col", "Load per fly (log scale)", NULL),
     radioButtons("load_base", NULL, c("log10" = "10", "log2" = "2"), inline = TRUE),
     selectInput("status_col", "Status (only \"Detected\" flies are used)", NULL),
@@ -395,13 +395,14 @@ server <- function(input, output, session) {
 
   observeEvent(rv$d, {
     cols <- names(rv$d); none <- c("(none)" = "")
-    numeric_cols <- cols[vapply(rv$d, function(v) is.numeric(v) && length(unique(v)) > 5, TRUE)]
-    load <- guess(cols, c("log10_CFU_per_fly", "log10_load", "log2_CFU_per_fly", "log10_PLUD", "Bacteria.per.fly_log10"))
-    updateSelectInput(session, "id", choices = cols, selected = guess(cols, c("ID", "Fly_ID", "Sample_ID", "sample_ID", "sampleID")))
+    numeric_cols <- cols[vapply(rv$d, function(v) { x <- num(v); mean(is.na(x[!is.na(v)])) == 0 && length(unique(x)) > 5 }, TRUE)]   # decimal commas included
+    load <- guess(cols, c("log10_CFU_per_fly", "log10_load", "log2_CFU_per_fly", "log10_PLUD", "Bacteria.per.fly_log10", "log2b", "log2_load"))
+    updateSelectInput(session, "id", choices = c("(none: row number)" = "", cols), selected = guess(cols, c("ID", "Fly_ID", "Sample_ID", "sample_ID", "sampleID")))
     updateSelectInput(session, "load_col", choices = cols, selected = load)
     updateRadioButtons(session, "load_base", selected = if (grepl("log2", load)) "2" else "10")
     updateSelectInput(session, "status_col", choices = c(none, cols), selected = guess(cols, c("Status")))
-    updateSelectInput(session, "x", choices = cols, selected = guess(cols, c("Genotype", "Line", "Treatment", "Sex")))
+    varying <- cols[vapply(rv$d, function(v) length(unique(v)) > 1, TRUE)]     # a column with a single value cannot be the x axis
+    updateSelectInput(session, "x", choices = cols, selected = guess(varying, c("Genotype", "Line", "Treatment", "Sex", "Age_at_infection")))
     updateSelectInput(session, "colour", choices = c(none, cols), selected = "")
     updateSelectInput(session, "panel", choices = c(none, cols), selected = "")
     updateSelectInput(session, "box", choices = c(none, cols), selected = guess(cols, c("Box_ID", "Box", "box")))
@@ -464,14 +465,15 @@ server <- function(input, output, session) {
 
   # flies used: detected, with a load, and the analysis columns
   flies <- reactive({
-    s <- settings(); d <- dat(); req(nzchar(s$id), nzchar(s$load_col), nzchar(s$x))
+    s <- settings(); d <- dat(); req(nzchar(s$load_col), nzchar(s$x))
     validate(need(nrow(d) > 0, "No fly is left after the filters."),
              need(s$panel == "" || !(s$panel %in% c(s$x, s$colour)), "Panels must be a different column from the x axis and the colour."),
              need(s$colour == "" || s$colour != s$x, "The colour must be a different column from the x axis."))
     y <- num(d[[s$load_col]]) * log10(s$load_base)                      # to log10
     status <- if (nzchar(s$status_col)) as.character(d[[s$status_col]]) else ifelse(is.finite(y), "Detected", "No load")
     keep <- status == "Detected" & is.finite(y)
-    pf <- data.frame(.id = as.character(d[[s$id]]), .y = y, Status = status, stringsAsFactors = FALSE)
+    pf <- data.frame(.row = seq_len(nrow(d)), .id = if (nzchar(s$id)) as.character(d[[s$id]]) else paste0("row ", seq_len(nrow(d))),
+                     .y = y, Status = status, stringsAsFactors = FALSE)
     pf$.x <- factor(chr(d[[s$x]]), levels = s$x_levels)
     pf$.col <- if (nzchar(s$colour)) factor(chr(d[[s$colour]]), levels = s$col_levels) else factor("")
     pf$.panel <- if (nzchar(s$panel)) factor(chr(d[[s$panel]])) else factor("All")
@@ -505,7 +507,7 @@ server <- function(input, output, session) {
     fl <- tryCatch(flies(), error = function(e) e)
     if (inherits(fl, "error")) return(div(class = "alert alert-danger", conditionMessage(fl)))
     s <- settings(); w <- character(0)
-    st <- table(fl$all$Status[!fl$all$.id %in% fl$used$.id])
+    st <- table(fl$all$Status[!fl$all$.row %in% fl$used$.row])
     if (length(st)) w <- c(w, paste0("Flies without a load, left out: ", paste(sprintf("%s %d", names(st), st), collapse = ", "), "."))
     if (s$screen) {
       sm <- screened()$summary
@@ -587,7 +589,7 @@ server <- function(input, output, session) {
     if (nzchar(s$box)) out$box <- as.character(fl$.box)
     if (nzchar(s$day)) out$day <- as.character(fl$.day)
     out$log10_load <- round(fl$.y, 4); out$Status <- fl$Status
-    out$Screen <- ifelse(fl$.id %in% sc$.id[sc$Removed], "removed", ifelse(fl$.id %in% sc$.id[sc$Flagged], "flagged, kept", ""))
+    out$Screen <- ifelse(fl$.row %in% sc$.row[sc$Removed], "removed", ifelse(fl$.row %in% sc$.row[sc$Flagged], "flagged, kept", ""))
     out[out$Status == "Detected" & is.finite(out$log10_load), ]
   })
   output$pf_table <- renderTable(head(pf_out(), 50))

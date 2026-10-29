@@ -8,11 +8,19 @@ The analysis is R itself (packages `lme4` and `EnvStats`). The app is built with
 
 The **per-fly table saved by [CFU Drop Counter](https://dduneau.github.io/cfu-drop-counter/)** (Load step): one row per fly, with its log10 load, its status, and the columns describing the fly (genotype, sex, box, day of injection, time of death …). The loads are estimated there, once, so that both apps use the same estimate.
 
-Any table with one row per fly and a log10 (or log2) load works as well, separated by commas, semicolons, tabs or spaces. Column names are free: you tell the app which column plays which role. When a `Status` column is given, only flies with the status `Detected` are analysed; the others are counted and listed in a warning.
+Any table with one row per fly and a log10 (or log2) load works as well, separated by commas, semicolons, tabs or spaces, with decimal points or decimal commas (as saved by a French Excel). Column names are free: you tell the app which column plays which role. When a `Status` column is given, only flies with the status `Detected` are analysed; the others are counted and listed in a warning.
 
 ### Example data set
 
-`example_PLUD_4lines_per_fly.csv`: 279 males of four lines (`Wild_type`, `Mutant_A`, `Mutant_B` and `Mutant_C`) collected at death after injection of *P. rettgeri*, two boxes per line, with the time of death. The table is in the format saved by CFU Drop Counter.
+`example_PLUD_RAL821.csv` has the design the protocol recommends: three replicate experiments with 12 flies per group in each, giving 36 per group. The flies are DGRP line RAL821 infected with *P. rettgeri* at 35 days of age, from Duneau et al. (BMC Biology), sampled at random from the published data: 12 females and 12 males from each of three replicates. Females and males of a replicate shared one box, so the sexes are compared within boxes.
+
+| Column | Content |
+|---|---|
+| `ID` | One identifier per fly, unique and with letters. |
+| `Line`, `Sex`, `Age_at_infection` | What the fly is. |
+| `Replicate` | The replicate experiment (day of injection). |
+| `Box_ID` | The box, unique across the experiment and with letters (`Box_B1_35d`). Here one box per replicate, so the box also accounts for the replicate. With several boxes per replicate, give the replicate as the day of injection too. |
+| `log10_CFU_per_fly`, `se_log`, `Status` | The load, its standard error and the status, as written by CFU Drop Counter (which also writes plates, drops and detection limits). |
 
 ## Using the app
 
