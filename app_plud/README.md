@@ -28,9 +28,12 @@ The sidebar opens on the two steps every analysis needs; the other sections are 
 
 1. **Data.** Load the per-fly table, or try the example.
 2. **Comparison.**
-   - **Groups to compare** (x axis), for example `Sex` or `Genotype`, and their **order**: type the groups in the order you want, separated by commas. Groups left out of the list are added at the end. By default the order is alphabetical, with a group whose name starts with wild, WT, control or ctrl placed first.
-   - **Reference group**: differences are given relative to it. The app asks for it rather than choosing: take the least susceptible group, the one with the lowest mortality in the survival assay, so that PLUD and mortality read in one direction (see the protocol).
+   - **Groups to compare** (x axis), for example `Sex` or `Genotype`.
+   - **Which group is the least susceptible?** The app asks for it rather than choosing: the group with the lowest mortality in the survival assay. It is the reference, so that PLUD and mortality read in one direction (see the protocol). Differences are given relative to it.
+   - **Order on the axis**: type the groups in the order you want, separated by commas. Groups left out of the list are added at the end. By default the order is alphabetical, with a group whose name starts with wild, WT, control or ctrl placed first.
    - **Box** (random effect). Tick **Box labels restart in each group** when box 1 of one line is not box 1 of another; the app ticks it when box numbers repeat across groups. **Day of injection** (optional) is a second random effect, for replicates holding several boxes.
+
+**The screen** is the protocol's and is not adjustable: the Rosner test within each group (each combination of panel, x group and colour), at most k = 2 values for every group, a 5% threshold, low values only (a fly dying of another cause dies below its PLUD). High values that are flagged are shown, not removed. Results are given with and without the screen.
 
 Optional sections:
 
@@ -39,8 +42,7 @@ Optional sections:
   - *a separate model for each group*, one test per sex.
 
   **Panels**: a third factor, for example the experiment. Each panel is screened and analysed separately.
-- **Flies to include.** **Keep only rows where** restricts the analysis to some values of a column (some genotypes, one sex). **A number lies between** restricts it to a range of a numeric column, for example flies that died at least 16 h after injection. Leave a bound empty for no limit.
-- **Screen.** The Rosner test is applied within each group (each combination of panel, x group and colour), with the same *k* for every group (2 by default) and a 5% threshold. By default only low values are removed: a fly dying of another cause dies below its PLUD. High values that are flagged are shown, not removed.
+- **Leave out groups.** Leave out whole groups, such as a genotype or a sex, without editing the file. Single flies cannot be removed by hand: only the screen removes flies, as described in the protocol.
 - **Columns and labels.** The load column (log10 or log2; log2 is converted to log10), the **detection status** and the fly identifier, all found automatically in a table from CFU Drop Counter. CFU Drop Counter marks a fly `Detected` when it has a load; flies with another status (no colony, or every drop too crowded to count) are left out and counted in a message. Axis labels.
 
 The app refuses settings that cannot be analysed: the box, the day or the fly identifier chosen as a group to compare, or a column with a single value. It warns when a group has fewer than 25 flies (the test is then less reliable; pool experimental replicates of the same group where possible), when high values are flagged, when each box holds a single group (the comparison then rests on the number of boxes), and when a variance is estimated at zero.
