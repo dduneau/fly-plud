@@ -24,24 +24,34 @@ Any table with one row per fly and a log10 (or log2) load works as well, separat
 
 ## Using the app
 
-1. **Data.** Load the per-fly table or try the example. Choose the fly identifier, the load column (log10 or log2; log2 is converted to log10) and the status column.
-2. **Flies to include.** **Keep only rows where** restricts the analysis to some values of a column (some genotypes, one sex). **A number lies between** restricts it to a range of a numeric column, for example flies that died at least 16 h after injection. Leave a bound empty for no limit.
-3. **Design.**
-   - **Groups on the x axis**, and their **order**: type the groups in the order you want, separated by commas (for example `Wild_type, Mutant_A, Mutant_B, Mutant_C`). Groups left out of the list are added at the end. By default the groups are in alphabetical order, with a group whose name starts with wild, WT, control or ctrl placed first.
-   - **Second factor, by colour** (optional), shown side by side within each x group, for example a treatment. Then choose what to **compare**: the x groups within each colour, or the colours within each x group. And how to **fit**:
-     - *one model for all groups*, for example `Line + Line:Treatment` when comparing treatments within lines: the groups share the residual variance and the box effects, and the likelihood ratio test is against `Line` alone, so it tests the treatment in all lines at once;
-     - *a separate model for each group*, one test per line.
-   - **Panels** (optional): a third factor, for example the experiment or the sex. Each panel is screened and analysed separately.
-   - **Reference group**: differences are given relative to it. It is the first group of the order unless you choose another.
-   - **Box** (random effect). Tick **Box labels restart in each group** when box 1 of one line is not box 1 of another; the app ticks it when box numbers repeat across groups. **Day of injection or experiment** (optional) is a second random effect.
-4. **Screen.** The Rosner test is applied within each group (each combination of panel, x group and colour), with the same *k* for every group (2 by default) and a 5% threshold. By default only low values are removed: a fly dying of another cause dies below its PLUD. High values that are flagged are shown, not removed.
+The sidebar opens on the two steps every analysis needs; the other sections are optional and stay closed.
 
-The app warns when a group has fewer than 25 flies (the test is then less reliable; pool experimental replicates of the same group where possible), when high values are flagged, when each box holds a single group (the comparison then rests on the number of boxes), and when a variance is estimated at zero.
+1. **Data.** Load the per-fly table, or try the example.
+2. **Comparison.**
+   - **Groups to compare** (x axis), for example `Sex` or `Genotype`.
+   - **Which group is the least susceptible?** The app asks for it rather than choosing: the group with the lowest mortality in the survival assay. It is the reference, so that PLUD and mortality read in one direction (see the protocol). Differences are given relative to it.
+   - **Order on the axis**: type the groups in the order you want, separated by commas. Groups left out of the list are added at the end. By default the order is alphabetical, with a group whose name starts with wild, WT, control or ctrl placed first.
+   - **Box** (random effect). Tick **Box labels restart in each group** when box 1 of one line is not box 1 of another; the app ticks it when box numbers repeat across groups. **Day of injection** (optional) is a second random effect, for replicates holding several boxes.
+
+**The screen** is the protocol's and is not adjustable: the Rosner test within each group (each combination of panel, x group and colour), at most k = 2 values for every group, a 5% threshold, low values only (a fly dying of another cause dies below its PLUD). High values that are flagged are shown, not removed. Results are given with and without the screen.
+
+Optional sections:
+
+- **Second factor and panels.** A **second factor, by colour**, shown side by side within each x group (for example age within each sex). Choose what to **compare** (the x groups within each colour, or the colours within each x group) and how to **fit**:
+  - *one model for all groups*, for example `Sex + Sex:Age` when comparing ages within each sex: the groups share the residual variance and the box effects, and the likelihood ratio test is against `Sex` alone;
+  - *a separate model for each group*, one test per sex.
+
+  **Panels**: a third factor, for example the experiment. Each panel is screened and analysed separately.
+- **Leave out groups.** Leave out whole groups, such as a genotype or a sex, without editing the file. Single flies cannot be removed by hand: only the screen removes flies, as described in the protocol.
+- **Colours.** One colour per group (the colours of the second factor when there is one). Click a colour to change it; females are orange and males blue by default, as in the survival app.
+- **Columns and labels.** The load column (log10 or log2; log2 is converted to log10), the **detection status** and the fly identifier, all found automatically in a table from CFU Drop Counter. CFU Drop Counter marks a fly `Detected` when it has a load; flies with another status (no colony, or every drop too crowded to count) are left out and counted in a message. Axis labels.
+
+The app refuses settings that cannot be analysed: the box, the day or the fly identifier chosen as a group to compare, or a column with a single value. It warns when a group has fewer than 25 flies (the test is then less reliable; pool experimental replicates of the same group where possible), when high values are flagged, when each box holds a single group (the comparison then rests on the number of boxes), and when a variance is estimated at zero.
 
 ## What it gives
 
-- **Plots**: log10 PLUD per group (violins, every fly, the group mean, the number of flies, and the flies removed by the screen as crosses), and the difference of each group to the reference with its 95% confidence interval. PDF, PNG or SVG.
-- **Results**, with and without the screen: the mean log10 PLUD of each group with its 95% CI; the difference to the reference with its profile-likelihood 95% CI and what it amounts to in bacteria per fly; the likelihood ratio test (maximum likelihood fits); the within-group SD, the SD of the random effects, and the difference this design detects with 80% power (2.8 × SD × √(2/n)).
+- **Plots**: log10 PLUD per group (violins, every fly, the group mean, the number of flies, and the flies removed by the screen as crosses), and the difference of each group to the reference with its 95% confidence interval, labelled with what it amounts to in bacteria per fly. PDF, PNG or SVG.
+- **Results**, with and without the screen: the mean log10 PLUD of each group with its 95% CI; the difference to the reference with its profile-likelihood 95% CI, and the same difference and CI in bacteria per fly; the likelihood ratio test (maximum likelihood fits); the within-group SD, the SD of the random effects, and the difference this design detects with 80% power (2.8 × SD × √(2/n)).
 - **Screen**: for each group, the number of flies and of values flagged and removed, and the list of flagged flies.
 - **Flies**: the table of analysed flies with their group, box, log10 load, and whether the screen removed them.
 - **Methods text**: a paragraph with the filters, the screen (with the number removed in each group), the model and the results.

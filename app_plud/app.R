@@ -17,7 +17,25 @@ has_svglite <- requireNamespace("svglite", quietly = TRUE)
 APP_VERSION <- "1.0"
 EXAMPLE_FILE <- "example_PLUD_RAL821.csv"
 PALETTE <- c("#1f5fbf", "#e8850c", "#2a9d6f", "#c0398a", "#7a5cc4", "#8c6d1f", "#3a3a3a", "#d1453b")
-GREY_FILL <- "#9fb8dc"
+# Female orange and male blue in every app of the protocol, whatever the order; other groups take the palette in order
+group_colours <- function(lv, custom = NULL) {
+  cols <- setNames(rep(NA_character_, length(lv)), lv)
+  low <- tolower(lv)
+  cols[low %in% c("female", "females", "f")] <- "#e8850c"
+  cols[low %in% c("male", "males", "m")] <- "#1f5fbf"
+  free <- setdiff(PALETTE, cols)
+  cols[is.na(cols)] <- rep(free, length.out = sum(is.na(cols)))
+  hit <- intersect(names(custom), lv); cols[hit] <- unlist(custom[hit])      # colours chosen by the user
+  cols
+}
+# a difference in bacteria per fly, as a plotmath label: +5.0 x 10^6
+bact_label <- function(v) {
+  out <- rep("", length(v)); ok <- is.finite(v) & v != 0
+  e <- floor(log10(abs(v[ok]))); m <- abs(v[ok]) / 10^e
+  out[ok] <- sprintf('"%s%.1f" %%*%% 10^%d', ifelse(v[ok] < 0, "\u2212", "+"), m, e)
+  out
+}
+fmt_bact <- function(v) ifelse(is.finite(v), formatC(v, format = "e", digits = 1), "")
 
 # ------------------------------------------------------------------ reading
 read_any <- function(path) {
@@ -120,7 +138,9 @@ fit_analysis <- function(x, has_box, has_day, joint) {
   ref_mean <- function(w) means$Mean[means$Group == ref & (is.na(means$Within) | means$Within %in% w)][1]
   diffs <- data.frame(Within = tl[, 1], Group = tl[, 2], Difference = unname(b1[terms]),
                       Lower = unname(ci[, 1]), Upper = unname(ci[, 2]))
-  diffs$Bacteria_per_fly <- vapply(seq_len(nrow(diffs)), function(i) 10^ref_mean(diffs$Within[i]) * (10^diffs$Difference[i] - 1), 0)
+  in_bact <- function(d) vapply(seq_len(nrow(diffs)), function(i) 10^ref_mean(diffs$Within[i]) * (10^d[i] - 1), 0)
+  diffs$Bacteria_per_fly <- in_bact(diffs$Difference)
+  diffs$Bacteria_lower <- in_bact(diffs$Lower); diffs$Bacteria_upper <- in_bact(diffs$Upper)
   cell <- if (joint) paste(x$.w, x$.cmp) else as.character(x$.cmp)
   total_sd <- sqrt(sum(tapply(x$.y, cell, function(v) sum((v - mean(v))^2))) / (nrow(x) - length(unique(cell))))
   n_h <- length(unique(cell)) / sum(1 / as.vector(table(cell)))
@@ -161,7 +181,7 @@ plot_plud <- function(pf, s) {
   kept <- pf[!pf$Removed, ]
   shapes <- scale_shape_manual(values = c(`FALSE` = 21, `TRUE` = 4), guide = "none")
   if (nzchar(s$colour)) {
-    lv <- levels(pf$.col); cols <- setNames(rep(PALETTE, length.out = length(lv)), lv)
+    cols <- group_colours(levels(pf$.col), s$cols)
     dg <- position_dodge(width = 0.8)
     mm <- aggregate(.y ~ .x + .col + .panel, data = kept, FUN = mean)
     p <- ggplot(pf, aes(.x, .y, fill = .col)) +
@@ -172,11 +192,12 @@ plot_plud <- function(pf, s) {
       scale_fill_manual(values = cols) + shapes
   } else {
     mm <- aggregate(.y ~ .x + .panel, data = kept, FUN = mean)
-    p <- ggplot(pf, aes(.x, .y)) +
-      geom_violin(data = kept, fill = GREY_FILL, colour = "grey30", linewidth = 0.3, alpha = 0.7, scale = "width", width = 0.75) +
-      geom_point(aes(shape = Removed), position = position_jitter(width = 0.12, height = 0, seed = 1), fill = "white",
-                 colour = "black", size = 1.4, stroke = 0.4) +
-      geom_point(data = mm, shape = 95, size = 9, colour = "black") + shapes
+    p <- ggplot(pf, aes(.x, .y, fill = .x)) +
+      geom_violin(data = kept, colour = "grey30", linewidth = 0.3, alpha = 0.55, scale = "width", width = 0.75, show.legend = FALSE) +
+      geom_point(aes(shape = Removed), position = position_jitter(width = 0.12, height = 0, seed = 1),
+                 colour = "black", size = 1.4, stroke = 0.4, show.legend = FALSE) +
+      geom_point(data = mm, shape = 95, size = 9, colour = "black", show.legend = FALSE) +
+      scale_fill_manual(values = group_colours(levels(pf$.x), s$cols), guide = "none") + shapes
   }
   top <- max(pf$.y) + 0.12 * diff(range(pf$.y))
   if (nzchar(s$colour)) {
@@ -197,7 +218,8 @@ plot_diffs <- function(res, s) {
     f <- res[[nm]]; if (inherits(f, "error")) return(NULL)
     d <- f$diffs
     refs <- data.frame(Within = unique(d$Within), Group = f$ref, Difference = 0, Lower = 0, Upper = 0)
-    d <- rbind(refs, d[, c("Within", "Group", "Difference", "Lower", "Upper")])
+    refs$Bacteria_per_fly <- NA
+    d <- rbind(refs, d[, c("Within", "Group", "Difference", "Lower", "Upper", "Bacteria_per_fly")])
     d$Panel <- ifelse(is.na(d$Within), nm, paste(nm, d$Within, sep = if (nchar(nm)) " / " else ""))
     d$Panel <- sub("^All / |^ / ", "", d$Panel); d
   }))
@@ -207,8 +229,14 @@ plot_diffs <- function(res, s) {
   p <- ggplot(rows, aes(Group, Difference)) +
     geom_hline(yintercept = 0, colour = "red", linetype = 4) +
     geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.25, linewidth = 0.5) +
-    geom_point(size = 2.5, colour = PALETTE[1]) +
-    labs(x = NULL, y = paste0("Difference in log10 PLUD (95% CI)\nrelative to ", s$ref)) + theme_plud
+    geom_point(aes(colour = Group), size = 2.5, show.legend = FALSE) +
+    geom_text(aes(y = Upper, label = bact_label(Bacteria_per_fly)), parse = TRUE, vjust = -0.6, size = 3) +
+    scale_y_continuous(expand = expansion(mult = c(0.05, 0.15))) +
+    scale_colour_manual(values = group_colours(levels(rows$Group), s$cols)) +
+    labs(x = NULL, y = paste0("Difference in log10 PLUD (95% CI)\nrelative to ", s$ref),
+         caption = "Numbers: the difference in bacteria per fly") + theme_plud +
+    theme(plot.caption = element_text(size = 9, colour = "grey30"))
+  if (sum(nchar(levels(rows$Group))) > 24) p <- p + theme(axis.text.x = element_text(angle = 35, hjust = 1))
   if (length(unique(rows$Panel)) > 1) {
     rows$Panel <- factor(rows$Panel, levels = unique(rows$Panel))
     p <- p %+% rows + facet_wrap(~Panel)
@@ -221,12 +249,7 @@ fmt_p <- function(p) ifelse(is.na(p), "", ifelse(p < 0.001, formatC(p, format = 
 
 methods_text <- function(res, s, scr, n_flies) {
   cells <- paste(c(if (nzchar(s$panel)) s$panel, s$x, if (nzchar(s$colour)) s$colour), collapse = " x ")
-  filt <- c(if (nzchar(s$filter_col) && length(s$filter_vals)) sprintf("%s = %s", s$filter_col, paste(s$filter_vals, collapse = ", ")),
-            if (nzchar(s$range_col)) {
-              lo <- s$range_min; hi <- s$range_max
-              if (is.na(lo) && is.na(hi)) NULL else if (is.na(hi)) sprintf("%s of at least %s", s$range_col, lo)
-              else if (is.na(lo)) sprintf("%s of at most %s", s$range_col, hi) else sprintf("%s from %s to %s", s$range_col, lo, hi)
-            })
+  filt <- if (nzchar(s$filter_col) && length(s$filter_vals)) sprintf("%s %s", s$filter_col, paste(s$filter_vals, collapse = ", "))
   scr_txt <- if (s$screen) {
     sm <- scr$summary
     sprintf("Within each group (%s), log10 PLUD was screened for flies that did not die of the infection with a Rosner test (generalized extreme studentized deviate; EnvStats), at a %s%% threshold and at most k = %d values per group; %s. The screen removed %d of %d flies (%s). Removed values are interpreted as deaths from other causes, an inference that the test does not establish. ",
@@ -247,12 +270,12 @@ methods_text <- function(res, s, scr, n_flies) {
     if (inherits(f, "error")) return(sprintf("%s: the model could not be fitted (%s).", nm, conditionMessage(f)))
     dd <- f$diffs
     paste0(if (nzchar(nm) && nm != "All") paste0(nm, ". ") else "",
-           paste(sprintf("%s%s: %+.2f log10 (95%% CI %.2f to %.2f), %s bacteria per fly", ifelse(is.na(dd$Within), "", paste0(dd$Within, ", ")),
-                         dd$Group, dd$Difference, dd$Lower, dd$Upper, formatC(dd$Bacteria_per_fly, format = "e", digits = 1)), collapse = "; "),
+           paste(sprintf("%s%s: %+.2f log10 (95%% CI %.2f to %.2f), that is %s bacteria per fly (%s to %s)", ifelse(is.na(dd$Within), "", paste0(dd$Within, ", ")),
+                         dd$Group, dd$Difference, dd$Lower, dd$Upper, fmt_bact(dd$Bacteria_per_fly), fmt_bact(dd$Bacteria_lower), fmt_bact(dd$Bacteria_upper)), collapse = "; "),
            sprintf("; likelihood ratio test, chi2 = %.1f, df = %d, p = %s. Within-group SD of log10 PLUD = %.2f; with %.0f flies per group, a difference of %.2f log10 would be detected with 80%% power at 5%%.",
                    f$lrt$Chisq, f$lrt$df, fmt_p(f$lrt$p), f$total_sd, f$n_h, f$detectable))
   })
-  paste0(if (length(filt)) paste0("The analysis was restricted to flies with ", paste(filt, collapse = " and "), ". ") else "",
+  paste0(if (length(filt)) paste0("Flies of ", filt, " were left out of the analysis. ") else "",
          scr_txt, model, "Analysis made with the PLUD app version ", APP_VERSION, " on ", n_flies, " flies.\n\n",
          paste(res_txt, collapse = "\n"))
 }
@@ -327,45 +350,50 @@ send_file <- function(session, name, mime, write_fun) {
 # ------------------------------------------------------------------ UI
 ui <- page_sidebar(
   title = "PLUD: pathogen load upon death",
-  tags$head(tags$script(HTML(DL_JS))),
-  sidebar = sidebar(width = 340,
-    h6("1. Data"),
-    fileInput("file", NULL, accept = c(".csv", ".txt", ".tsv"), placeholder = "Per-fly table from CFU Drop Counter"),
-    actionLink("use_example", "Try the example (RAL821, 36 females and 36 males)"),
-    div(class = "small text-muted mt-1", textOutput("data_info")),
-    selectInput("id", "Fly identifier (optional)", NULL),
-    selectInput("load_col", "Load per fly (log scale)", NULL),
-    radioButtons("load_base", NULL, c("log10" = "10", "log2" = "2"), inline = TRUE),
-    selectInput("status_col", "Status (only \"Detected\" flies are used)", NULL),
-    hr(),
-    h6("2. Flies to include"),
-    selectInput("filter_col", "Keep only rows where (optional)", NULL),
-    selectizeInput("filter_vals", NULL, choices = NULL, multiple = TRUE, options = list(placeholder = "values to keep")),
-    selectInput("range_col", "and where a number lies between (optional)", NULL),
-    div(class = "d-flex gap-2", numericInput("range_min", "from", NA), numericInput("range_max", "to", NA)),
-    hr(),
-    h6("3. Design"),
-    selectInput("x", "Groups on the x axis", NULL),
-    textInput("x_order", "Order on the axis (comma-separated)", ""),
-    selectInput("colour", "Second factor, by colour (optional)", NULL),
-    conditionalPanel("input.colour != ''",
-      textInput("col_order", "Order of the colours (comma-separated)", ""),
-      radioButtons("compare", "Compare", c("the groups on the x axis, within each colour" = "x", "the colours, within each x group" = "colour")),
-      radioButtons("joint", "Fit", c("one model for all groups (shared residual variance and boxes)" = "joint", "a separate model for each group" = "separate"))),
-    selectInput("panel", "Panels (optional, analysed separately)", NULL),
-    selectInput("ref", "Reference group", NULL),
-    selectInput("box", "Box (random effect)", NULL),
-    checkboxInput("box_restart", "Box labels restart in each group (box 1 of one line is not box 1 of another)", FALSE),
-    selectInput("day", "Day of injection or experiment (random effect, optional)", NULL),
-    hr(),
-    h6("4. Screen"),
-    checkboxInput("screen", "Remove flies that did not die of the infection (Rosner test)", TRUE),
-    numericInput("k", "At most k values per group", 2, min = 1, max = 10),
-    numericInput("alpha", "Threshold", 0.05, min = 0.001, max = 0.2, step = 0.01),
-    checkboxInput("low_only", "Remove low values only (flies dying of other causes have lower loads)", TRUE),
-    hr(),
-    textInput("ylab", "y-axis label", "log10 PLUD (bacteria per fly)"),
-    textInput("xlab", "x-axis label", "")
+  tags$head(tags$script(HTML(DL_JS)), tags$style(HTML("select.shiny-input-select:not(.selectized) { appearance: auto; -webkit-appearance: menulist; }"))),
+  sidebar = sidebar(width = 350,
+    accordion(id = "steps", open = c("Data", "Comparison"),
+      accordion_panel("Data", icon = icon("table"),
+        fileInput("file", NULL, accept = c(".csv", ".txt", ".tsv"), placeholder = "Per-fly table from CFU Drop Counter"),
+        actionLink("use_example", "Try the example (RAL821, 36 females and 36 males)"),
+        div(class = "small text-muted mt-1", textOutput("data_info"))),
+      accordion_panel("Comparison", icon = icon("scale-balanced"),
+        selectInput("x", "Groups to compare (x axis)", NULL),
+        selectInput("ref", "Which group is the least susceptible?", NULL),
+        div(class = "small text-muted", style = "margin-top:-0.6rem; margin-bottom:0.8rem",
+            "The group with the lowest mortality in the survival assay. It is the reference: as in the protocol, mortality and PLUD then read in one direction."),
+        textInput("x_order", "Order on the axis (comma-separated)", ""),
+        selectInput("box", "Box (random effect)", NULL, selectize = FALSE),
+        conditionalPanel("input.box != ''",
+          checkboxInput("box_restart", "Box labels restart in each group (box 1 of one line is not box 1 of another)", FALSE)),
+        selectInput("day", "Day of injection (random effect, optional)", NULL, selectize = FALSE)),
+      accordion_panel("Second factor and panels", icon = icon("layer-group"),
+        p(class = "small text-muted", "Optional: for designs with a second factor, such as age within each sex, and a third one shown as panels."),
+        selectInput("colour", "Second factor, by colour", NULL, selectize = FALSE),
+        conditionalPanel("input.colour != ''",
+          textInput("col_order", "Order of the colours (comma-separated)", ""),
+          radioButtons("compare", "Compare", c("the groups on the x axis, within each colour" = "x", "the colours, within each x group" = "colour")),
+          radioButtons("joint", "Fit", c("one model for all groups (shared residual variance and boxes)" = "joint", "a separate model for each group" = "separate"))),
+        selectInput("panel", "Panels (analysed separately)", NULL, selectize = FALSE)),
+      accordion_panel("Leave out groups", icon = icon("filter"),
+        p(class = "small text-muted", "Optional: leave out whole groups, such as a genotype or a sex. Single flies cannot be removed here; the screen does that, as described in the protocol."),
+        selectInput("filter_col", "Column", NULL, selectize = FALSE),
+        selectizeInput("filter_vals", "Groups to leave out", choices = NULL, multiple = TRUE,
+                       options = list(placeholder = "none", plugins = list("remove_button")))),
+      accordion_panel("Colours", icon = icon("palette"),
+        p(class = "small text-muted", "Click a colour to change it. Females are orange and males blue by default, as in the survival app."),
+        uiOutput("colour_pickers"),
+        actionLink("reset_cols", "Back to the default colours")),
+      accordion_panel("Columns and labels", icon = icon("table-columns"),
+        p(class = "small text-muted", "Found automatically in a table from CFU Drop Counter."),
+        selectInput("load_col", "Load per fly (log scale)", NULL),
+        radioButtons("load_base", NULL, c("log10" = "10", "log2" = "2"), inline = TRUE),
+        selectInput("status_col", "Detection status", NULL, selectize = FALSE),
+        p(class = "small text-muted", "CFU Drop Counter marks each fly \"Detected\" when it has a load. Flies with another status (no colony, or every drop too crowded to count) have no load: they are left out and counted in a message."),
+        selectInput("id", "Fly identifier (optional, for the tables)", NULL, selectize = FALSE),
+        textInput("xlab", "x-axis label", ""),
+        textInput("ylab", "y-axis label", "log10 PLUD (bacteria per fly)"))
+    )
   ),
   uiOutput("messages"),
   navset_card_underline(
@@ -395,41 +423,30 @@ server <- function(input, output, session) {
 
   observeEvent(rv$d, {
     cols <- names(rv$d); none <- c("(none)" = "")
-    numeric_cols <- cols[vapply(rv$d, function(v) { x <- num(v); mean(is.na(x[!is.na(v)])) == 0 && length(unique(x)) > 5 }, TRUE)]   # decimal commas included
+    group_cols <- cols[vapply(rv$d, function(v) { n <- length(unique(v)); n >= 2 && n <= 30 }, TRUE)]   # columns of groups, not of flies
     load <- guess(cols, c("log10_CFU_per_fly", "log10_load", "log2_CFU_per_fly", "log10_PLUD", "Bacteria.per.fly_log10", "log2b", "log2_load"))
     updateSelectInput(session, "id", choices = c("(none: row number)" = "", cols), selected = guess(cols, c("ID", "Fly_ID", "Sample_ID", "sample_ID", "sampleID")))
     updateSelectInput(session, "load_col", choices = cols, selected = load)
     updateRadioButtons(session, "load_base", selected = if (grepl("log2", load)) "2" else "10")
     updateSelectInput(session, "status_col", choices = c(none, cols), selected = guess(cols, c("Status")))
     varying <- cols[vapply(rv$d, function(v) length(unique(v)) > 1, TRUE)]     # a column with a single value cannot be the x axis
-    updateSelectInput(session, "x", choices = cols, selected = guess(varying, c("Genotype", "Line", "Treatment", "Sex", "Age_at_infection")))
-    updateSelectInput(session, "colour", choices = c(none, cols), selected = "")
-    updateSelectInput(session, "panel", choices = c(none, cols), selected = "")
+    updateSelectInput(session, "x", choices = group_cols, selected = guess(varying, c("Genotype", "Line", "Treatment", "Sex", "Age_at_infection")))
+    updateSelectInput(session, "colour", choices = c(none, group_cols), selected = "")
+    updateSelectInput(session, "panel", choices = c(none, group_cols), selected = "")
     updateSelectInput(session, "box", choices = c(none, cols), selected = guess(cols, c("Box_ID", "Box", "box")))
     updateSelectInput(session, "day", choices = c(none, cols), selected = guess(cols, c("Day_of_injection", "Day", "Experiment", "Experiment_ID")))
-    updateSelectInput(session, "filter_col", choices = c(none, cols), selected = "")
-    updateSelectInput(session, "range_col", choices = c(none, numeric_cols), selected = "")
+    updateSelectInput(session, "filter_col", choices = c(none, group_cols), selected = "")
   })
 
   dat <- reactive({
     req(rv$d); d <- rv$d
     if (nzchar(input$filter_col %||% "") && length(input$filter_vals))
-      d <- d[as.character(d[[input$filter_col]]) %in% input$filter_vals, , drop = FALSE]
-    if (nzchar(input$range_col %||% "")) {
-      v <- num(d[[input$range_col]])
-      lo <- if (is.na(input$range_min)) -Inf else input$range_min; hi <- if (is.na(input$range_max)) Inf else input$range_max
-      d <- d[!is.na(v) & v >= lo & v <= hi, , drop = FALSE]
-    }
+      d <- d[!chr(d[[input$filter_col]]) %in% input$filter_vals, , drop = FALSE]
     d
   })
   observeEvent(input$filter_col, {
-    vals <- if (nzchar(input$filter_col)) sort(unique(as.character(rv$d[[input$filter_col]]))) else character(0)
-    updateSelectizeInput(session, "filter_vals", choices = vals, selected = vals)
-  }, ignoreInit = TRUE)
-  observeEvent(input$range_col, {
-    v <- if (nzchar(input$range_col)) num(rv$d[[input$range_col]]) else NA
-    updateNumericInput(session, "range_min", value = if (nzchar(input$range_col)) min(v, na.rm = TRUE) else NA)
-    updateNumericInput(session, "range_max", value = if (nzchar(input$range_col)) max(v, na.rm = TRUE) else NA)
+    vals <- if (nzchar(input$filter_col)) sort(unique(chr(rv$d[[input$filter_col]]))) else character(0)
+    updateSelectizeInput(session, "filter_vals", choices = vals, selected = character(0))
   }, ignoreInit = TRUE)
 
   # orders follow the chosen columns; the user's order is kept when the data change
@@ -443,32 +460,50 @@ server <- function(input, output, session) {
   })
   x_levels <- reactive({ req(nzchar(input$x)); order_levels(dat()[[input$x]], input$x_order) })
   col_levels <- reactive(if (nzchar(input$colour %||% "")) order_levels(dat()[[input$colour]], input$col_order) else character(0))
-  prev_first <- reactiveVal(NULL)
+  # the reference is asked, never preselected: it is the least susceptible group, known from the survival assay
   observeEvent(list(x_levels(), col_levels(), input$compare), {
     lv <- if (input$compare == "colour" && length(col_levels())) col_levels() else x_levels()
     cur <- isolate(input$ref)
-    # keep a reference the user chose; otherwise follow the first group of the order
-    keep <- !is.null(cur) && cur %in% lv && !identical(cur, prev_first())
-    updateSelectInput(session, "ref", choices = lv, selected = if (keep) cur else lv[1])
-    prev_first(lv[1])
+    updateSelectInput(session, "ref", choices = c("Choose the reference group" = "", lv),
+                      selected = if (!is.null(cur) && cur %in% lv) cur else "")
+  })
+  has_ref <- reactive(nzchar(input$ref %||% "") && input$ref %in% (if (settings()$compare == "colour") col_levels() else x_levels()))
+
+  # colours chosen by the user, kept by group name
+  custom_cols <- reactiveVal(list())
+  observeEvent(input$pick_col, { cc <- custom_cols(); cc[[input$pick_col$lv]] <- input$pick_col$col; custom_cols(cc) })
+  observeEvent(input$reset_cols, custom_cols(list()))
+  output$colour_pickers <- renderUI({
+    lv <- if (nzchar(input$colour %||% "")) col_levels() else x_levels()
+    cur <- group_colours(lv, custom_cols())
+    lapply(seq_along(lv), function(i) div(class = "d-flex align-items-center gap-2 mb-1",
+      tags$input(type = "color", value = unname(cur[i]), style = "width:2.5rem; height:1.8rem; border:none; padding:0; background:none;",
+                 onchange = sprintf("Shiny.setInputValue('pick_col', {lv: %s, col: this.value}, {priority: 'event'})",
+                                    jsonlite::toJSON(lv[i], auto_unbox = TRUE))),
+      span(lv[i])))
   })
 
   settings <- reactive(list(
-    id = input$id, load_col = input$load_col, load_base = as.numeric(input$load_base), status_col = input$status_col %||% "",
+    cols = custom_cols(),
+    id = input$id %||% "", load_col = input$load_col, load_base = as.numeric(input$load_base), status_col = input$status_col %||% "",
     x = input$x, x_levels = x_levels(), colour = input$colour %||% "", col_levels = col_levels(), panel = input$panel %||% "",
-    compare = if (nzchar(input$colour %||% "")) input$compare else "x", joint = input$joint == "joint", ref = input$ref,
+    compare = if (nzchar(input$colour %||% "")) input$compare else "x", joint = input$joint == "joint", ref = input$ref %||% "",
     box = input$box %||% "", box_restart = isTRUE(input$box_restart), day = input$day %||% "",
-    screen = isTRUE(input$screen), k = input$k, alpha = input$alpha, low_only = isTRUE(input$low_only),
+    screen = TRUE, k = 2, alpha = 0.05, low_only = TRUE,      # fixed: the protocol's screen
     xlab = if (nzchar(input$xlab)) input$xlab else input$x, ylab = input$ylab,
-    filter_col = input$filter_col %||% "", filter_vals = input$filter_vals %||% character(0),
-    range_col = input$range_col %||% "", range_min = input$range_min, range_max = input$range_max))
+    filter_col = input$filter_col %||% "", filter_vals = input$filter_vals %||% character(0)))
 
   # flies used: detected, with a load, and the analysis columns
   flies <- reactive({
     s <- settings(); d <- dat(); req(nzchar(s$load_col), nzchar(s$x))
-    validate(need(nrow(d) > 0, "No fly is left after the filters."),
+    validate(need(nrow(d) > 0, "No fly is left: too many groups are left out."),
              need(s$panel == "" || !(s$panel %in% c(s$x, s$colour)), "Panels must be a different column from the x axis and the colour."),
-             need(s$colour == "" || s$colour != s$x, "The colour must be a different column from the x axis."))
+             need(s$colour == "" || s$colour != s$x, "The colour must be a different column from the x axis."),
+             need(!(s$box %in% c(s$x, s$colour, s$panel)) || s$box == "", sprintf("%s is chosen as the box and as a factor to compare. The box is the unit flies share; compare what the flies are (sex, genotype, age), with the box as random effect.", s$box)),
+             need(!(s$day %in% c(s$x, s$colour, s$panel)) || s$day == "", sprintf("%s is chosen as the day of injection and as a factor to compare.", s$day)),
+             need(s$x != s$id || s$id == "", "The fly identifier cannot be the groups to compare."),
+             need(length(unique(d[[s$x]])) >= 2, sprintf("%s has a single value: choose a column with at least two groups to compare.", s$x)),
+             need(length(unique(d[[s$x]])) <= max(2, nrow(d) / 3), sprintf("%s has almost one value per fly: choose the column with the groups to compare.", s$x)))
     y <- num(d[[s$load_col]]) * log10(s$load_base)                      # to log10
     status <- if (nzchar(s$status_col)) as.character(d[[s$status_col]]) else ifelse(is.finite(y), "Detected", "No load")
     keep <- status == "Detected" & is.finite(y)
@@ -493,13 +528,13 @@ server <- function(input, output, session) {
     if (s$screen) screen_groups(pf, s$k, s$alpha, s$low_only)
     else { pf$Flagged <- FALSE; pf$Removed <- FALSE; pf$Direction <- ""; list(pf = pf, summary = NULL) }
   })
-  results <- reactive({ s <- settings(); pf <- screened()$pf; analyse(if (s$screen) pf[!pf$Removed, ] else pf, s) })
-  results_all <- reactive({ s <- settings(); if (s$screen) analyse(screened()$pf, s) else NULL })
+  results <- reactive({ req(has_ref()); s <- settings(); pf <- screened()$pf; analyse(if (s$screen) pf[!pf$Removed, ] else pf, s) })
+  results_all <- reactive({ req(has_ref()); s <- settings(); if (s$screen) analyse(screened()$pf, s) else NULL })
 
   output$data_info <- renderText({
     if (is.null(rv$d)) return("No data loaded.")
     n <- nrow(dat())
-    sprintf("%s: %d rows%s, %d columns.", rv$name, nrow(rv$d), if (n < nrow(rv$d)) sprintf(" (%d kept by the filters)", n) else "", ncol(rv$d))
+    sprintf("%s: %d rows%s, %d columns.", rv$name, nrow(rv$d), if (n < nrow(rv$d)) sprintf(" (%d after leaving out groups)", n) else "", ncol(rv$d))
   })
 
   output$messages <- renderUI({
@@ -523,6 +558,10 @@ server <- function(input, output, session) {
                           if (min(nb) == max(nb)) min(nb) else paste(min(nb), "to", max(nb)), if (max(nb) > 1) "es" else ""))
       }
     }
+    if (!has_ref()) return(tagList(
+      div(class = "alert alert-info", strong("Choose the reference group."),
+          " Take the least susceptible group, the one with the lowest mortality in the survival assay. Differences in PLUD are then given relative to it, and read in the same direction as the hazard ratios (see the protocol)."),
+      if (length(w)) div(class = "alert alert-warning", tags$ul(lapply(w, tags$li)))))
     for (nm in names(results())) {
       f <- results()[[nm]]
       if (inherits(f, "error")) w <- c(w, sprintf("%s: the model could not be fitted (%s).", nm, conditionMessage(f)))
@@ -532,7 +571,7 @@ server <- function(input, output, session) {
   })
 
   the_plot <- reactive({
-    s <- settings(); p1 <- plot_plud(screened()$pf, s); p2 <- plot_diffs(results(), s)
+    s <- settings(); p1 <- plot_plud(screened()$pf, s); p2 <- if (has_ref()) plot_diffs(results(), s)
     if (is.null(p2)) p1 else p1 + p2 + plot_layout(widths = c(2, 1))
   })
   output$plot <- renderPlot(the_plot(), res = 96)
@@ -545,7 +584,9 @@ server <- function(input, output, session) {
                `95% CI` = sprintf("%.2f to %.2f", m$Lower, m$Upper),
                `Difference to reference` = ifelse(m$Group == f$ref, "reference", sprintf("%+.2f", dd$Difference)),
                `95% CI of difference` = ifelse(m$Group == f$ref, "", sprintf("%.2f to %.2f", dd$Lower, dd$Upper)),
-               `In bacteria per fly` = ifelse(m$Group == f$ref, "", formatC(dd$Bacteria_per_fly, format = "e", digits = 1)), check.names = FALSE)
+               `Difference in bacteria per fly` = ifelse(m$Group == f$ref, "", fmt_bact(dd$Bacteria_per_fly)),
+               `95% CI in bacteria per fly` = ifelse(m$Group == f$ref, "", paste(fmt_bact(dd$Bacteria_lower), "to", fmt_bact(dd$Bacteria_upper))),
+               check.names = FALSE)
   }
   output$results_ui <- renderUI({
     s <- settings()
